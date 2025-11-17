@@ -8,31 +8,41 @@
 
 using namespace std;
 
-struct LineItem {
+struct LineItem
+{
     string sku;
     int quantity{0};
     double unitPrice{0.0};
 };
 
-class InvoiceService {
+class InvoiceService
+{
 public:
-    string process(const vector<LineItem>& items,
-                   const map<string, double>& discounts,
-                   const string& email) {
+    string process(const vector<LineItem> &items,
+                   const map<string, double> &discounts,
+                   const string &email)
+    {
         // pricing
         double subtotal = 0.0;
-        for (auto& it : items) subtotal += it.unitPrice * it.quantity;
+        for (auto &it : items)
+            subtotal += it.unitPrice * it.quantity;
 
         // discounts (tightly coupled)
         double discount_total = 0.0;
-        for (auto& kv : discounts) {
-            const string& k = kv.first;
+        for (auto &kv : discounts)
+        {
+            const string &k = kv.first;
             double v = kv.second;
-            if (k == "percent_off") {
+            if (k == "percent_off")
+            {
                 discount_total += subtotal * (v / 100.0);
-            } else if (k == "flat_off") {
+            }
+            else if (k == "flat_off")
+            {
                 discount_total += v;
-            } else {
+            }
+            else
+            {
                 // unknown ignored
             }
         }
@@ -44,7 +54,8 @@ public:
         // rendering inline (pretend PDF)
         ostringstream pdf;
         pdf << "INVOICE\n";
-        for (auto& it : items) {
+        for (auto &it : items)
+        {
             pdf << it.sku << " x" << it.quantity << " @ " << it.unitPrice << "\n";
         }
         pdf << "Subtotal: " << subtotal << "\n"
@@ -53,7 +64,8 @@ public:
             << "Total: " << grand << "\n";
 
         // email I/O inline (tight coupling)
-        if (!email.empty()) {
+        if (!email.empty())
+        {
             cout << "[SMTP] Sending invoice to " << email << "...\n";
         }
 
@@ -64,22 +76,25 @@ public:
     }
 
     // helper used by ad-hoc tests; also messy on purpose
-    double computeTotal(const vector<LineItem>& items,
-                        const map<string, double>& discounts) {
+    double computeTotal(const vector<LineItem> &items,
+                        const map<string, double> &discounts)
+    {
         string dummyEmail = "noreply@example.com";
         auto rendered = process(items, discounts, dummyEmail);
         auto pos = rendered.rfind("Total:");
-        if (pos == string::npos) throw runtime_error("No total");
+        if (pos == string::npos)
+            throw runtime_error("No total");
         auto line = rendered.substr(pos + 6);
         return stod(line);
     }
 };
 
-int main() {
-    InvoiceService svc; 
+int main()
+{
+    InvoiceService svc;
     // Create items
-    vector<LineItem> items = { {"ITEM-001", 3, 100.0}, {"ITEM-002", 1, 250.0} };
-    map<string,double> discounts = { {"percent_off", 10.0} };
+    vector<LineItem> items = {{"ITEM-001", 3, 100.0}, {"ITEM-002", 1, 250.0}};
+    map<string, double> discounts = {{"percent_off", 10.0}};
     cout << svc.process(items, discounts, "customer@example.com") << endl;
     return 0;
 }
