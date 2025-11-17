@@ -4,8 +4,7 @@
 #include <string>
 #include <vector>
 #include <map>
-#include <stdexcept>
-
+#include <memory>
 using namespace std;
 
 struct LineItem
@@ -15,86 +14,193 @@ struct LineItem
     double unitPrice{0.0};
 };
 
-class InvoiceService
+
+
+// ------------------ Discount Strategy -------------------------
+class IDiscountStrategy
 {
 public:
+    virtual double compute(double subtotal) const = 0;
+    virtual ~IDiscountStrategy() = default;
+};
+
+class PercentOff : public IDiscountStrategy
+{
+    double percent;
+
+public:
+    PercentOff(double p) : percent(p) {}
+    double compute(double subtotal) const override
+    {
+        return subtotal * (percent / 100);
+    }
+};
+
+class FlatOff : public IDiscountStrategy
+{
+    int amount;
+
+public:
+    FlatOff(int a) : amount(a) {}
+    double compute(double) const override
+    {
+        return amount;
+    }
+};
+
+
+
+
+// ------------------ Tax Strategy -------------------------
+class ITaxRule
+{
+public:
+    virtual double compute(double base) const = 0;
+    virtual ~ITaxRule() = default;
+};
+
+class GST18 : public ITaxRule
+{
+public:
+    double compute(double base) const override
+    {
+        return base * 0.18;
+    }
+};
+
+
+
+// ------------------ Rendering Strategy -------------------------
+class IInvoiceRenderer
+{
+    public:
+    virtual string render(const vector<LineItem> &items,
+                          double subtotal,
+                          double discounts,
+                          double tax,
+                          double total) const = 0;
+    virtual ~IInvoiceRenderer() = default;
+};
+
+class SimpleTextRenderer : public IInvoiceRenderer
+{
+public:
+    string render(const vector<LineItem> &items,
+                  double subtotal,
+                  double discount,
+                  double tax,
+                  double grand) const override
+    {
+        ostringstream out;
+        out << "INVOICE\n";
+        for (auto &it : items)
+            out << it.sku << " x" << it.quantity << " @ " << it.unitPrice << "\n";
+
+        out << "Subtotal: " << subtotal << "\n";
+        out << "Discounts: " << discount << "\n";
+        out << "Tax: " << tax << "\n";
+        out << "Total: " << grand << "\n";
+        return out.str();
+    }
+};
+
+
+
+// ------------------ Email Service -------------------------
+class IEmailService
+{
+public:
+    virtual void send(const string &email, const string &content) = 0;
+    virtual ~IEmailService() = default;
+};
+
+class ConsoleEmailService : public IEmailService
+{
+public:
+    void send(const string &email, const string &) override
+    {
+        cout << "[SMTP] Sending invoice to " << email << "...\n";
+    }
+};
+
+
+
+// ------------------ Logger -------------------------
+class ILogger
+{
+public:
+    virtual void log(const string &msg) = 0;
+    virtual ~ILogger() = default;
+};
+
+class ConsoleLogger : public ILogger
+{
+public:
+    void log(const string &msg) override
+    {
+        cout << "[LOG] " << msg << "\n";
+    }
+};
+
+
+
+
+// -------------------InvoiceService Class ----------------------
+class InvoiceService
+{
+    unique_ptr<ITaxRule> taxRule;
+    unique_ptr<IInvoiceRenderer> renderer;
+    unique_ptr<IEmailService> emailer;
+    unique_ptr<ILogger> logger;
+
+public:
+    InvoiceService(unique_ptr<ITaxRule> t,
+                   unique_ptr<IInvoiceRenderer> r,
+                   unique_ptr<IEmailService> e,
+                   unique_ptr<ILogger> l)
+        : taxRule(move(t)), renderer(move(r)), emailer(move(e)), logger(move(l)) {}
+
     string process(const vector<LineItem> &items,
-                   const map<string, double> &discounts,
+                   const vector<unique_ptr<IDiscountStrategy>> &discounts,
                    const string &email)
     {
-        // pricing
         double subtotal = 0.0;
         for (auto &it : items)
             subtotal += it.unitPrice * it.quantity;
 
-        // discounts (tightly coupled)
         double discount_total = 0.0;
-        for (auto &kv : discounts)
-        {
-            const string &k = kv.first;
-            double v = kv.second;
-            if (k == "percent_off")
-            {
-                discount_total += subtotal * (v / 100.0);
-            }
-            else if (k == "flat_off")
-            {
-                discount_total += v;
-            }
-            else
-            {
-                // unknown ignored
-            }
-        }
+        for (auto &d : discounts)
+            discount_total += d->compute(subtotal);
 
-        // tax inline
-        double tax = (subtotal - discount_total) * 0.18;
+        double tax = taxRule->compute(subtotal - discount_total);
         double grand = subtotal - discount_total + tax;
 
-        // rendering inline (pretend PDF)
-        ostringstream pdf;
-        pdf << "INVOICE\n";
-        for (auto &it : items)
-        {
-            pdf << it.sku << " x" << it.quantity << " @ " << it.unitPrice << "\n";
-        }
-        pdf << "Subtotal: " << subtotal << "\n"
-            << "Discounts: " << discount_total << "\n"
-            << "Tax: " << tax << "\n"
-            << "Total: " << grand << "\n";
+        string content = renderer->render(items, subtotal, discount_total, tax, grand);
 
-        // email I/O inline (tight coupling)
         if (!email.empty())
-        {
-            cout << "[SMTP] Sending invoice to " << email << "...\n";
-        }
+            emailer->send(email, content);
+        logger->log("Invoice processed for " + email + " total=" + to_string(grand));
 
-        // logging inline
-        cout << "[LOG] Invoice processed for " << email << " total=" << grand << "\n";
-
-        return pdf.str();
-    }
-
-    // helper used by ad-hoc tests; also messy on purpose
-    double computeTotal(const vector<LineItem> &items,
-                        const map<string, double> &discounts)
-    {
-        string dummyEmail = "noreply@example.com";
-        auto rendered = process(items, discounts, dummyEmail);
-        auto pos = rendered.rfind("Total:");
-        if (pos == string::npos)
-            throw runtime_error("No total");
-        auto line = rendered.substr(pos + 6);
-        return stod(line);
+        return content;
     }
 };
 
 int main()
 {
-    InvoiceService svc;
-    // Create items
-    vector<LineItem> items = {{"ITEM-001", 3, 100.0}, {"ITEM-002", 1, 250.0}};
-    map<string, double> discounts = {{"percent_off", 10.0}};
-    cout << svc.process(items, discounts, "customer@example.com") << endl;
+    vector<LineItem> items = {
+        {"ITEM-001", 3, 100.0},
+        {"ITEM-002", 1, 250.0}};
+
+    vector<unique_ptr<IDiscountStrategy>> discounts;
+    discounts.push_back(make_unique<PercentOff>(10.0));
+
+    InvoiceService svc(
+        make_unique<GST18>(),
+        make_unique<SimpleTextRenderer>(),
+        make_unique<ConsoleEmailService>(),
+        make_unique<ConsoleLogger>());
+
+    cout << svc.process(items, discounts, "customer@example.com");
+
     return 0;
 }
