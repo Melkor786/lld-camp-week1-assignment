@@ -1,86 +1,119 @@
-// 02-media-lsp-isp.cpp
-// Messy starter: Fat interface + LSP surprises (violates ISP + LSP)
+// 02-media-lsp-isp-solved.cpp
 
 #include <iostream>
 #include <string>
-#include <stdexcept>
-
 using namespace std;
 
-class Player
-{
+// ----------------- Small Focused Interfaces (ISP) -------------------
+
+class IPlayable {
 public:
-    virtual ~Player() = default;
-    virtual void play(const string &source) = 0;
+    virtual ~IPlayable() = default;
+    virtual void play(const string& source) = 0;
+    virtual bool isPlaying() const = 0;
+};
+
+class IPausable {
+public:
+    virtual ~IPausable() = default;
     virtual void pause() = 0;
-    virtual void record(const string &destination) = 0; // many can't
-    virtual void streamLive(const string &url) = 0;     // many can't
-    virtual void download(const string &sourceUrl) = 0; // many can't
 };
 
-class AudioPlayer : public Player
-{
+class IDownloadable {
+public:
+    virtual ~IDownloadable() = default;
+    virtual void download(const string& url) = 0;
+};
+
+class ILiveStreamable {
+public:
+    virtual ~ILiveStreamable() = default;
+    virtual void startStream(const string& url) = 0;
+    virtual bool isLive() const = 0;
+};
+
+class IRecordable {
+public:
+    virtual ~IRecordable() = default;
+    virtual void record(const string& dest) = 0;
+};
+
+// ----------------- Concrete Classes (LSP Safe) ---------------------
+
+// Audio player only supports play, pause, download.
+class AudioPlayer : public IPlayable, public IPausable, public IDownloadable {
     bool playing{false};
 
 public:
-    void play(const string &source) override
-    {
-        (void)source;
-        playing = true;
-    }
-    void pause() override { playing = false; }
-    void record(const string &) override { throw logic_error("AudioPlayer cannot record"); }         // LSP break
-    void streamLive(const string &) override { throw logic_error("AudioPlayer cannot streamLive"); } // LSP break
-    void download(const string &url) override { (void)url; /* pretend */ }
-    bool isPlaying() const { return playing; }
-};
-
-class CameraStreamPlayer : public Player
-{
-    bool liveStarted{false};
-    bool playing{false};
-
-public:
-    void play(const string &src) override
-    {
+    void play(const string& src) override {
         (void)src;
-        // Surprise: needs streamLive first for “real” play
-        if (!liveStarted)
-        {
-            cout << "[WARN] playing without live stream started.\n";
-        }
         playing = true;
     }
-    void pause() override { playing = false; }
-    void record(const string &dest) override { (void)dest; /* pretend */ }
-    void streamLive(const string &url) override
-    {
-        (void)url;
-        liveStarted = true;
+
+    void pause() override {
+        playing = false;
     }
-    void download(const string &) override { throw logic_error("CameraStreamPlayer cannot download"); } // LSP break
-    bool isPlaying() const { return playing; }
-    bool isLive() const { return liveStarted; }
+
+    void download(const string& url) override {
+        (void)url; /* simulate download */
+    }
+
+    bool isPlaying() const override {
+        return playing;
+    }
 };
 
-int main()
+// Camera stream player explicitly requires live stream before play.
+// No hidden preconditions → LSP safe.
+class LiveStreamPlayer : public IPlayable, public IPausable, 
+                         public ILiveStreamable, public IRecordable 
 {
+    bool live{false};
+    bool playing{false};
+
+public:
+    void startStream(const string& url) override {
+        (void)url;
+        live = true;
+    }
+
+    bool isLive() const override {
+        return live;
+    }
+
+    void play(const string& src) override {
+        (void)src;
+        if (!live) 
+            throw runtime_error("Must start live stream before play()!");
+
+        playing = true;
+    }
+
+    void pause() override {
+        playing = false;
+    }
+
+    void record(const string& dest) override {
+        (void)dest; /* simulate record */
+    }
+
+    bool isPlaying() const override {
+        return playing;
+    }
+};
+
+// ----------------- Client Code ---------------------
+
+int main() {
     AudioPlayer ap;
     ap.play("song.mp3");
     cout << "Audio playing: " << boolalpha << ap.isPlaying() << "\n";
     ap.pause();
 
-    CameraStreamPlayer cam;
-    cam.play("rtsp://camera");       // warning surprise
-    cam.streamLive("rtsp://camera"); // required order
+    LiveStreamPlayer cam;
+    cam.startStream("rtsp://camera");
     cam.play("rtsp://camera");
-    try
-    {
-        cam.download("http://file");
-    }
-    catch (const exception &e)
-    {
-        cout << "[EXC] " << e.what() << "\n";
-    }
+    cout << "Camera playing: " << boolalpha << cam.isPlaying() << "\n";
+
     return 0;
 }
